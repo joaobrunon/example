@@ -5,7 +5,7 @@
 // @description  Gera relatório em Excel (.xlsx) das turmas do Data Analytics (Expansão 2026): resumo da turma, alunos e notas por disciplina. Exporta a turma atual ou todas as turmas.
 // @author       você
 // @match        https://expansao.educacao.sp.gov.br/local/data_analytics/*
-// @require      https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js
+// @require      https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js
 // @grant        none
 // @run-at       document-idle
 // ==/UserScript==
@@ -149,6 +149,98 @@
     });
   }
 
+  // ---------- Estilos do Excel ----------
+
+  const BRAND = '0A1970';        // azul institucional (cabeçalho)
+  const ZEBRA = 'F4F6FB';        // listras das linhas pares
+  const CINZA_BORDA = 'D5DAE5';
+  const COR = { ruim: 'C0392B', medio: 'B9770E', bom: '1E8449', neutro: '7F8C8D' };
+
+  const borda = { style: 'thin', color: { rgb: CINZA_BORDA } };
+  const bordasTodas = { top: borda, bottom: borda, left: borda, right: borda };
+
+  function corNota(n) {
+    if (n == null || isNaN(n)) return COR.neutro;
+    if (n < 5) return COR.ruim;
+    if (n < 7) return COR.medio;
+    return COR.bom;
+  }
+  function corProg(p) {
+    if (p == null || isNaN(p)) return COR.neutro;
+    if (p < 50) return COR.ruim;
+    if (p < 80) return COR.medio;
+    return COR.bom;
+  }
+
+  // Monta uma aba estilizada: título mesclado, cabeçalho colorido, zebra,
+  // bordas, autofiltro, painel congelado e cores condicionais por coluna.
+  // colDefs[c] = { w, align, numFmt, cor: 'nota' | 'prog' | null }
+  function montarAba(wb, nomeAba, titulo, headers, linhas, colDefs) {
+    const nCols = headers.length;
+    const ultCol = nCols - 1;
+    const ws = XLSX.utils.aoa_to_sheet([[titulo], headers, ...linhas]);
+
+    ws['!cols'] = colDefs.map((c) => ({ wch: c.w }));
+    ws['!rows'] = [{ hpt: 26 }, { hpt: 22 }];
+    ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: ultCol } }];
+
+    // Título
+    const tAddr = XLSX.utils.encode_cell({ r: 0, c: 0 });
+    ws[tAddr].s = {
+      font: { bold: true, sz: 14, color: { rgb: BRAND } },
+      alignment: { vertical: 'center', horizontal: 'left' },
+    };
+
+    // Cabeçalho
+    for (let c = 0; c < nCols; c++) {
+      const addr = XLSX.utils.encode_cell({ r: 1, c });
+      if (!ws[addr]) ws[addr] = { t: 's', v: headers[c] };
+      ws[addr].s = {
+        font: { bold: true, sz: 11, color: { rgb: 'FFFFFF' } },
+        fill: { fgColor: { rgb: BRAND } },
+        alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
+        border: {
+          top: { style: 'thin', color: { rgb: BRAND } },
+          bottom: { style: 'thin', color: { rgb: BRAND } },
+          left: { style: 'thin', color: { rgb: 'FFFFFF' } },
+          right: { style: 'thin', color: { rgb: 'FFFFFF' } },
+        },
+      };
+    }
+
+    // Linhas de dados
+    for (let i = 0; i < linhas.length; i++) {
+      const r = 2 + i;
+      const ehZebra = i % 2 === 1;
+      for (let c = 0; c < nCols; c++) {
+        const addr = XLSX.utils.encode_cell({ r, c });
+        const cell = ws[addr];
+        if (!cell) continue;
+        const def = colDefs[c] || {};
+        const estilo = {
+          alignment: { horizontal: def.align || 'left', vertical: 'center' },
+          border: bordasTodas,
+        };
+        if (ehZebra) estilo.fill = { fgColor: { rgb: ZEBRA } };
+        if (def.numFmt) {
+          cell.z = def.numFmt;
+          estilo.numFmt = def.numFmt;
+        }
+        if (def.cor === 'nota') estilo.font = { bold: true, color: { rgb: corNota(cell.v) } };
+        else if (def.cor === 'prog') estilo.font = { color: { rgb: corProg(cell.v) } };
+        cell.s = estilo;
+      }
+    }
+
+    // Autofiltro na linha de cabeçalho
+    ws['!autofilter'] = {
+      ref: `${XLSX.utils.encode_cell({ r: 1, c: 0 })}:${XLSX.utils.encode_cell({ r: 1 + linhas.length, c: ultCol })}`,
+    };
+
+    XLSX.utils.book_append_sheet(wb, ws, nomeAba);
+    return ws;
+  }
+
   // ---------- Geração do arquivo Excel ----------
 
   function gerarExcel(turmas, nomeArquivo) {
@@ -163,37 +255,54 @@
     }
 
     const wb = XLSX.utils.book_new();
+    const escola = turmasValidas[0].escola || 'Escola';
+    const dataBR = new Date().toLocaleDateString('pt-BR');
+    const subtitulo =
+      turmasValidas.length === 1
+        ? `${turmasValidas[0].nome || ''}`
+        : `${turmasValidas.length} turmas`;
 
     // Aba 1: visão geral das turmas
-    const cabTurmas = [
-      'Turma', 'ID SED', 'Diretoria', 'Escola', 'Cidade', 'Itinerário',
-      'Nota média', 'Progresso médio (%)', 'Acessaram', 'Nunca acessaram', 'Total de alunos',
-    ];
-    const linhasTurmas = turmasValidas.map((t) => [
-      t.nome, t.idSed, t.diretoria, t.escola, t.cidade, t.itinerario,
-      t.mediaNota, t.mediaProgresso, t.acessaram, t.nuncaAcessaram, t.totalAlunos,
-    ]);
-    const wsTurmas = XLSX.utils.aoa_to_sheet([cabTurmas, ...linhasTurmas]);
-    wsTurmas['!cols'] = [
-      { wch: 28 }, { wch: 12 }, { wch: 16 }, { wch: 36 }, { wch: 16 }, { wch: 14 },
-      { wch: 11 }, { wch: 18 }, { wch: 11 }, { wch: 16 }, { wch: 15 },
-    ];
-    XLSX.utils.book_append_sheet(wb, wsTurmas, 'Turmas');
+    montarAba(
+      wb,
+      'Turmas',
+      `Relatório de Turmas — ${escola}  •  ${dataBR}`,
+      ['Turma', 'ID SED', 'Diretoria', 'Escola', 'Cidade', 'Itinerário',
+        'Nota média', 'Progresso médio', 'Acessaram', 'Nunca acessaram', 'Total de alunos'],
+      turmasValidas.map((t) => [
+        t.nome, t.idSed, t.diretoria, t.escola, t.cidade, t.itinerario,
+        t.mediaNota, t.mediaProgresso, t.acessaram, t.nuncaAcessaram, t.totalAlunos,
+      ]),
+      [
+        { w: 28, align: 'left' }, { w: 12, align: 'center' }, { w: 16, align: 'left' },
+        { w: 36, align: 'left' }, { w: 16, align: 'left' }, { w: 14, align: 'center' },
+        { w: 12, align: 'center', numFmt: '0.00', cor: 'nota' },
+        { w: 16, align: 'center', numFmt: '0"%"', cor: 'prog' },
+        { w: 12, align: 'center' }, { w: 16, align: 'center' }, { w: 15, align: 'center' },
+      ]
+    );
 
     // Aba 2: alunos (resumo)
-    const cabAlunos = ['Turma', 'Nome', 'Último acesso', 'Nota média', 'Progresso (%)'];
     const linhasAlunos = [];
     turmasValidas.forEach((t) => {
       t.alunos.forEach((a) => {
         linhasAlunos.push([t.nome, a.nome, a.ultimoAcesso, a.notaMedia, a.progresso]);
       });
     });
-    const wsAlunos = XLSX.utils.aoa_to_sheet([cabAlunos, ...linhasAlunos]);
-    wsAlunos['!cols'] = [{ wch: 28 }, { wch: 36 }, { wch: 14 }, { wch: 12 }, { wch: 14 }];
-    XLSX.utils.book_append_sheet(wb, wsAlunos, 'Alunos');
+    montarAba(
+      wb,
+      'Alunos',
+      `Alunos — ${escola}  •  ${subtitulo}`,
+      ['Turma', 'Nome', 'Último acesso', 'Nota média', 'Progresso'],
+      linhasAlunos,
+      [
+        { w: 28, align: 'left' }, { w: 38, align: 'left' }, { w: 16, align: 'center' },
+        { w: 12, align: 'center', numFmt: '0.00', cor: 'nota' },
+        { w: 14, align: 'center', numFmt: '0"%"', cor: 'prog' },
+      ]
+    );
 
     // Aba 3: notas por disciplina (formato longo, fácil de filtrar/dinamizar)
-    const cabNotas = ['Turma', 'Nome', 'Disciplina', 'Nota', 'Progresso (%)'];
     const linhasNotas = [];
     turmasValidas.forEach((t) => {
       t.alunos.forEach((a) => {
@@ -202,9 +311,18 @@
         });
       });
     });
-    const wsNotas = XLSX.utils.aoa_to_sheet([cabNotas, ...linhasNotas]);
-    wsNotas['!cols'] = [{ wch: 28 }, { wch: 36 }, { wch: 30 }, { wch: 10 }, { wch: 14 }];
-    XLSX.utils.book_append_sheet(wb, wsNotas, 'Notas por Disciplina');
+    montarAba(
+      wb,
+      'Notas por Disciplina',
+      `Notas por disciplina — ${escola}  •  ${subtitulo}`,
+      ['Turma', 'Nome', 'Disciplina', 'Nota', 'Progresso'],
+      linhasNotas,
+      [
+        { w: 28, align: 'left' }, { w: 38, align: 'left' }, { w: 32, align: 'left' },
+        { w: 10, align: 'center', numFmt: '0.00', cor: 'nota' },
+        { w: 14, align: 'center', numFmt: '0"%"', cor: 'prog' },
+      ]
+    );
 
     XLSX.writeFile(wb, nomeArquivo);
   }
