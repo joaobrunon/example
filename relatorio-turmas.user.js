@@ -50,6 +50,25 @@
     return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
   }
 
+  function escapeHtml(s) {
+    return String(s == null ? '' : s).replace(/[&<>"]/g, (c) => (
+      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]
+    ));
+  }
+
+  function fmtNota(n) {
+    return n == null || isNaN(n) ? '—' : Number(n).toFixed(2).replace('.', ',');
+  }
+  function fmtProg(p) {
+    return p == null || isNaN(p) ? '—' : `${Math.round(p)}%`;
+  }
+  function classeNota(n) {
+    if (n == null || isNaN(n)) return '';
+    if (n < 5) return 'nota-ruim';
+    if (n < 7) return 'nota-medio';
+    return 'nota-bom';
+  }
+
   // ---------- Extração dos dados da turma exibida ----------
 
   function getTurmaNome() {
@@ -327,6 +346,154 @@
     XLSX.writeFile(wb, nomeArquivo);
   }
 
+  // ---------- Lista de ciência dos responsáveis (para impressão) ----------
+
+  function construirHtmlCiencia(turma) {
+    const dataBR = new Date().toLocaleDateString('pt-BR');
+
+    const meta = `
+      <p class="meta">
+        <b>Diretoria de Ensino:</b> ${escapeHtml(turma.diretoria)} &nbsp;•&nbsp;
+        <b>Escola:</b> ${escapeHtml(turma.escola)}<br>
+        <b>Turma:</b> ${escapeHtml(turma.nome)} &nbsp;•&nbsp;
+        <b>Itinerário:</b> ${escapeHtml(turma.itinerario)} &nbsp;•&nbsp;
+        <b>Cidade:</b> ${escapeHtml(turma.cidade)}<br>
+        <b>Data de emissão:</b> ${dataBR} &nbsp;•&nbsp;
+        <b>Bimestre/Período:</b> ____________________
+      </p>`;
+
+    // 1) Lista consolidada
+    const linhasConsolidado = turma.alunos.map((a, i) => `
+      <tr>
+        <td class="c">${i + 1}</td>
+        <td>${escapeHtml(a.nome)}</td>
+        <td class="c ${classeNota(a.notaMedia)}">${fmtNota(a.notaMedia)}</td>
+        <td class="c">${fmtProg(a.progresso)}</td>
+        <td class="assinatura-cel"></td>
+        <td class="assinatura-cel"></td>
+      </tr>`).join('');
+
+    const consolidado = `
+      <h1>Ciência dos Responsáveis — Resultados dos Estudantes</h1>
+      ${meta}
+      <p class="declaracao">
+        Declaramos, pela assinatura abaixo, estar cientes do desempenho escolar
+        do(a) estudante sob nossa responsabilidade, referente ao período letivo informado.
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th class="c" style="width:34px">#</th>
+            <th>Estudante</th>
+            <th class="c" style="width:70px">Nota média</th>
+            <th class="c" style="width:80px">Progresso</th>
+            <th style="width:32%">Nome do responsável</th>
+            <th style="width:32%">Assinatura</th>
+          </tr>
+        </thead>
+        <tbody>${linhasConsolidado}</tbody>
+      </table>`;
+
+    // 2) Comprovantes individuais
+    const comprovantes = turma.alunos.map((a) => {
+      const disc = a.disciplinas.map((d) => `
+        <tr>
+          <td>${escapeHtml(d.disciplina)}</td>
+          <td class="c ${classeNota(d.nota)}">${fmtNota(d.nota)}</td>
+          <td class="c">${fmtProg(d.progresso)}</td>
+        </tr>`).join('');
+
+      return `
+        <div class="slip">
+          <h3>${escapeHtml(a.nome)}</h3>
+          <div class="slip-meta">
+            ${escapeHtml(turma.escola)} • Turma ${escapeHtml(turma.nome)} • ${escapeHtml(turma.itinerario)}
+          </div>
+          <table>
+            <thead>
+              <tr><th>Disciplina</th><th class="c" style="width:80px">Nota</th><th class="c" style="width:90px">Progresso</th></tr>
+            </thead>
+            <tbody>
+              ${disc}
+              <tr class="linha-total">
+                <td><b>Média geral / Progresso</b></td>
+                <td class="c ${classeNota(a.notaMedia)}"><b>${fmtNota(a.notaMedia)}</b></td>
+                <td class="c"><b>${fmtProg(a.progresso)}</b></td>
+              </tr>
+            </tbody>
+          </table>
+          <p class="declaracao">
+            Declaro estar ciente do desempenho escolar acima, referente ao(à) estudante sob minha responsabilidade.
+          </p>
+          <div class="assina-area">
+            <div class="campo"><div class="linha-assina"></div><div class="rotulo">Nome do responsável</div></div>
+            <div class="campo" style="max-width:160px"><div class="linha-assina"></div><div class="rotulo">Data</div></div>
+            <div class="campo"><div class="linha-assina"></div><div class="rotulo">Assinatura</div></div>
+          </div>
+        </div>`;
+    }).join('');
+
+    const css = `
+      *{box-sizing:border-box}
+      body{font-family:Arial,Helvetica,sans-serif;color:#222;margin:24px;font-size:12px}
+      .toolbar{position:sticky;top:0;background:#0A1970;padding:10px 14px;margin:-24px -24px 18px;border-radius:0 0 8px 8px;display:flex;align-items:center;gap:12px}
+      .toolbar button{background:#fff;color:#0A1970;border:0;padding:8px 14px;font-weight:bold;border-radius:6px;cursor:pointer;font-size:13px}
+      .toolbar span{color:#cdd6ff;font-size:12px}
+      h1{font-size:18px;color:#0A1970;margin:0 0 6px}
+      h2{font-size:15px;color:#0A1970;margin:18px 0 10px}
+      .meta{margin:0 0 10px;line-height:1.6}
+      .declaracao{background:#f4f6fb;border:1px solid #d5dae5;padding:10px 12px;border-radius:6px;margin:10px 0 14px}
+      table{width:100%;border-collapse:collapse;margin-bottom:12px}
+      th,td{border:1px solid #b9c0d4;padding:6px 8px;vertical-align:middle}
+      th{background:#0A1970;color:#fff;font-size:12px;text-align:left}
+      td.c,th.c{text-align:center}
+      .assinatura-cel{height:34px}
+      .nota-ruim{color:#C0392B;font-weight:bold}
+      .nota-medio{color:#B9770E;font-weight:bold}
+      .nota-bom{color:#1E8449;font-weight:bold}
+      .linha-total td{background:#f4f6fb}
+      .slip{border:1px solid #0A1970;border-radius:8px;padding:14px 16px;margin-bottom:14px;page-break-inside:avoid}
+      .slip h3{margin:0 0 4px;font-size:14px;color:#0A1970}
+      .slip-meta{color:#555;font-size:11px;margin-bottom:8px}
+      .assina-area{display:flex;gap:24px;margin-top:14px;flex-wrap:wrap}
+      .campo{flex:1;min-width:200px}
+      .linha-assina{border-bottom:1px solid #333;height:28px}
+      .rotulo{font-size:11px;color:#555;margin-top:3px}
+      .quebra{page-break-before:always}
+      @media print{.no-print{display:none!important}body{margin:0}@page{size:A4;margin:14mm}}`;
+
+    return `<!doctype html>
+<html lang="pt-br"><head><meta charset="utf-8">
+<title>Ciência dos Responsáveis — ${escapeHtml(turma.nome)}</title>
+<style>${css}</style></head>
+<body>
+  <div class="toolbar no-print">
+    <button onclick="window.print()">Imprimir / Salvar como PDF</button>
+    <span>${turma.alunos.length} estudante(s) • a lista consolidada e os comprovantes individuais saem em páginas separadas.</span>
+  </div>
+  ${consolidado}
+  <div class="quebra"></div>
+  <h2>Comprovantes individuais (um por responsável)</h2>
+  ${comprovantes}
+</body></html>`;
+  }
+
+  function gerarListaCiencia(turma) {
+    if (!turma || !turma.alunos.length) {
+      alert('Selecione uma turma com alunos antes de gerar a lista.');
+      return;
+    }
+    const html = construirHtmlCiencia(turma);
+    const win = window.open('', '_blank');
+    if (!win) {
+      alert('Não foi possível abrir a janela de impressão. Permita pop-ups para este site e tente novamente.');
+      return;
+    }
+    win.document.open();
+    win.document.write(html);
+    win.document.close();
+  }
+
   // ---------- Ações dos botões ----------
 
   function exportarTurmaAtual() {
@@ -337,6 +504,15 @@
     }
     const nome = `Relatorio_Turma_${sanitizeFile(turma.nome || turma.idSed)}_${dataHoje()}.xlsx`;
     gerarExcel([turma], nome);
+  }
+
+  function exportarListaCiencia() {
+    const turma = coletarTurmaAtual();
+    if (!turma || !turma.alunos.length) {
+      alert('Selecione uma turma com alunos antes de gerar a lista.');
+      return;
+    }
+    gerarListaCiencia(turma);
   }
 
   async function exportarTodasTurmas(botao) {
@@ -431,9 +607,16 @@
       '<i class="fa fa-file-excel-o"></i> Excel (todas as turmas)',
       exportarTodasTurmas
     );
+    const btnCiencia = criarBotao(
+      'tm-lista-ciencia',
+      '<i class="fa fa-print"></i> Lista p/ responsáveis assinarem',
+      exportarListaCiencia
+    );
+    btnCiencia.className = 'btn btn-outline-secondary ms-2';
 
     container.appendChild(btnAtual);
     container.appendChild(btnTodas);
+    container.appendChild(btnCiencia);
   }
 
   // A página é dinâmica; garante que os botões permaneçam presentes.
